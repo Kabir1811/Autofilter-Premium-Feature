@@ -98,8 +98,18 @@ async def pm_text(bot, message):
         await mdb.update_top_messages(user_id, content)
         pm_search = await db.pm_search_status(bot_id)
         if pm_search:
+            # ============ NEW: TEXT SEARCH IN PM ============
+            text_found = await search_text_movies(bot, message)
+            if text_found:
+                return
+            # ================================================
             await auto_filter(bot, message)
         else:
+            # ============ NEW: TEXT SEARCH EVEN IF PM DISABLED ============
+            text_found = await search_text_movies(bot, message)
+            if text_found:
+                return
+            # ==============================================================
             await message.reply_text(
                 text=(
                     f"<b>🙋 ʜᴇʏ {user} 😍 ,\n\n"
@@ -108,15 +118,18 @@ async def pm_text(bot, message):
                     "आप केवल हमारे 𝑴𝒐𝒗𝒊𝒆 𝑮𝒓𝒐𝒖𝒑 पर ही 𝑴𝒐𝒗𝒊𝒆 𝑺𝒆𝒂𝒓𝒄𝒉 कर सकते हो । "
                     "आपको 𝑫𝒊𝒓𝒆𝒄𝒕 𝑩𝒐𝒕 पर 𝑴𝒐𝒗𝒊𝒆 𝑺𝒆𝒂𝒓𝒄𝒉 करने की 𝑷𝒆𝒓𝒎𝒊𝒔𝒔𝒊𝒐𝒏 नहीं है कृपया नीचे दिए गए 𝑹𝑬𝑸𝑼𝑬𝑺𝑻 𝑯𝑬𝑹𝑬 वाले 𝑩𝒖𝒕𝒕𝒐𝒏 पर क्लिक करके हमारे 𝑴𝒐𝒗𝒊𝒆 𝑮𝒓𝒐𝒖𝒑 को 𝑱𝒐𝒊𝒏 करें और वहां पर अपनी मनपसंद 𝑴𝒐𝒗𝒊𝒆 𝑺𝒆𝒂𝒓𝒄𝒉 सर्च करें ।"
                     "</blockquote></b>"
-                ), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📝 ʀᴇǫᴜᴇsᴛ ʜᴇʀᴇ ", url=GRP_LNK)]]))
-            await bot.send_message(chat_id=LOG_CHANNEL,
-                                   text=(
-                                       f"<b>#𝐏𝐌_𝐌𝐒𝐆\n\n"
-                                       f"👤 Nᴀᴍᴇ : {user}\n"
-                                       f"🆔 ID : {user_id}\n"
-                                       f"💬 Mᴇssᴀɢᴇ : {content}</b>"
-                                   )
-                                   )
+                ), reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("📝 ʀᴇǫᴜᴇsᴛ ʜᴇʀᴇ ", url=GRP_LNK)
+                ]]))
+            await bot.send_message(
+                chat_id=LOG_CHANNEL,
+                text=(
+                    f"<b>#𝐏𝐌_𝐌𝐒𝐆\n\n"
+                    f"👤 Nᴀᴍᴇ : {user}\n"
+                    f"🆔 ID : {user_id}\n"
+                    f"💬 Mᴇssᴀɢᴇ : {content}</b>"
+                )
+            )
     except Exception:
         pass
 
