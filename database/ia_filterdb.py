@@ -417,3 +417,126 @@ async def dreamxbotz_get_series(limit: int = 30) -> Dict[str, List[int]]:
     except Exception as e:
         logger.error(f"Error in dreamxbotz_get_series: {e}")
         return []
+
+# ═══════════════════════════════════════════════════════
+# ============ TEXT + LINK MESSAGES SUPPORT ============
+# ═══════════════════════════════════════════════════════
+
+@instance.register
+class TextMedia(Document):
+    """Text + Link messages save karne ke liye"""
+    message_id = fields.IntField(attribute="_id")
+    channel_id = fields.IntField(required=True)
+    movie_name = fields.StrField(required=True)
+    full_text = fields.StrField(required=True)
+    has_photo = fields.BoolField(default=False)
+    year = fields.StrField(allow_none=True)
+
+    class Meta:
+        indexes = ("$movie_name",)
+        collection_name = "text_movies"
+
+
+async def save_text_message(message):
+    """Database channel ke text/caption messages ko save karo"""
+    try:
+        text = message.caption or message.text
+        if not text or len(text) < 5:
+            return False, 0
+        
+        lines = text.strip().split("\n")
+        first_line = lines[0]
+        
+        # Emojis & special chars clean karo
+        cleaned = re.sub(r'[🎬🎥🎞️🍿📽️⚡🔗📌🆕🎭💾📅🏷️⭐✨🔥💥🎯🎪🎨🎭]', '', first_line).strip()
+        cleaned = re.sub(r'@\w+', '', cleaned).strip()
+        
+        # Year extract
+        year_match = re.search(r'(19|20)\d{2}', cleaned)
+        year = year_match.group() if year_match else ""
+        
+        if year:
+            movie_name = cleaned.split(year)[0].strip()
+        else:
+            movie_name = cleaned.strip()
+        
+        # Cleanup
+        movie_name = re.sub(r'[_\-\.#+$%^&*()!~`,;:"\'?/<>\[\]{}=|\\]', " ", movie_name)
+        movie_name = re.sub(r'\s+', ' ', movie_name).strip().lower()
+        
+        if len(movie_name) < 2:
+            return False, 0
+        
+        exists = await TextMedia.count_documents({"message_id": message.id}, limit=1)
+        if exists:
+            return False, 0
+        
+        record = TextMedia(
+            message_id=message.id,
+            channel_id=message.chat.id,
+            movie_name=movie_name,
+            full_text=text,
+            has_photo=bool(message.photo),
+            year=year
+        )
+        await record.commit()
+        logger.info(f"[TEXT SAVED] {movie_name}")
+        return True, 1
+        
+    except DuplicateKeyError:
+        return False, 0
+    except Exception as e:
+        logger.exception(f"[TEXT SAVE ERROR] {e}")
+        return False, 3
+
+
+async def get_text_search_results(query, max_results=10, offset=0):
+    """Text messages search karo"""
+    query = query.strip().lower()
+    if not query:
+        return [], "", 0
+    
+    if ' ' in query:
+        words = [re.escape(word) for word in query.split()]
+        raw_pattern = r'.*'.join(words)
+    else:
+        raw_pattern = re.escape(query)
+    
+    try:
+        regex = re.compile(raw_pattern, flags=re.IGNORECASE)
+    except re.error:
+        return [], "", 0
+    
+    filter_mongo = {"movie_name": regex}
+    
+    try:
+        total = await TextMedia.count_documents(filter_mongo)
+        cursor = TextMedia.find(filter_mongo).sort("$natural", -1).skip(offset).limit(max_results)
+        results = await cursor.to_list(length=max_results)
+        
+        next_offset = offset + len(results)
+        if next_offset >= total:
+            next_offset = ""
+        
+        return results, next_offset, total
+    except Exception as e:
+        logger.exception(f"[TEXT SEARCH ERROR] {e}")
+        return [], "", 0
+
+
+async def get_text_message_details(message_id):
+    """Specific text message ka detail lo"""
+    try:
+        result = await TextMedia.find_one({"message_id": int(message_id)})
+        return result
+    except Exception as e:
+        logger.exception(f"[TEXT GET ERROR] {e}")
+        return None
+
+
+async def get_total_text_count():
+    """Total text messages ka count"""
+    try:
+        return await TextMedia.count_documents({})
+    except:
+        return 0
