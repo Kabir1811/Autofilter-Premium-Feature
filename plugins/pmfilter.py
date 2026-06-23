@@ -4,7 +4,7 @@ from fuzzywuzzy import process
 from dreamxbotz.util.file_properties import get_name, get_hash
 from urllib.parse import quote_plus
 import logging
-from database.ia_filterdb import Media, Media2, get_file_details, get_search_results, get_bad_files
+from database.ia_filterdb import Media, Media2, get_file_details, get_search_results, get_bad_files, get_text_search_results, get_text_message_details
 from database.config_db import mdb
 from pyrogram.errors import FloodWait, UserIsBlocked, MessageNotModified, PeerIdInvalid, ChatAdminRequired, UserNotParticipant
 from pyrogram import Client, filters, enums
@@ -54,6 +54,13 @@ async def give_filter(client, message):
                     if await is_check_admin(client, message.chat.id, message.from_user.id):
                         return
                     return await message.delete()
+
+                 # ============ NEW: TEXT SEARCH FIRST ============
+                text_found = await search_text_movies(client, message)
+                if text_found:
+                    return
+                # ================================================
+                
                 await auto_filter(client, message)
         except KeyError:
             pass
@@ -2078,3 +2085,107 @@ async def advantage_spell_chok(client, message):
         await message.delete()
     except:
         pass
+
+# ═══════════════════════════════════════════════════════
+# ============ TEXT + LINK MOVIES SEARCH ============
+# ═══════════════════════════════════════════════════════
+
+async def search_text_movies(client, message):
+    """Text+Link messages search karo aur bhejo"""
+    search = message.text.strip()
+    if len(search) < 3:
+        return False
+    
+    # Clean search query (jaise auto_filter me hota hai)
+    search_clean = search.lower()
+    search_clean = re.sub(
+        r"\b(pl(i|e)*?(s|z+|ease|se|ese|(e+)s(e)?)|((send|snd|giv(e)?|gib)(\sme)?)|movie(s)?|new|latest|bro|find|link|file)\b",
+        "", search_clean, flags=re.IGNORECASE
+    )
+    search_clean = re.sub(r'\s+', ' ', search_clean).strip()
+    
+    if len(search_clean) < 2:
+        search_clean = search.lower()
+    
+    results, next_offset, total = await get_text_search_results(search_clean, max_results=10)
+    
+    if not results:
+        return False
+    
+    try:
+        # 1 result - direct send
+        if len(results) == 1:
+            movie = results[0]
+            try:
+                await client.copy_message(
+                    chat_id=message.chat.id,
+                    from_chat_id=movie.channel_id,
+                    message_id=movie.message_id,
+                    reply_to_message_id=message.id
+                )
+            except Exception as e:
+                logger.exception(f"Copy failed: {e}")
+                await message.reply_text(
+                    text=movie.full_text,
+                    disable_web_page_preview=False,
+                    quote=True
+                )
+            return True
+        
+        # Multiple results - buttons
+        buttons = []
+        for movie in results[:10]:
+            title = movie.full_text.split("\n")[0][:60]
+            title = re.sub(r'[🎬🎥🎞️🍿📽️⚡🔗📌🆕]', '', title).strip()
+            title = re.sub(r'@\w+', '', title).strip()
+            
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"🎬 {title}",
+                    callback_data=f"txtmv#{movie.message_id}#{movie.channel_id}"
+                )
+            ])
+        
+        buttons.append([
+            InlineKeyboardButton("❌ Close", callback_data="close_data")
+        ])
+        
+        await message.reply_text(
+            f"<b>🔍 Found <code>{total}</code> results for: <code>{search}</code>\n\n"
+            f"👇 Select your movie:</b>",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            quote=True
+        )
+        return True
+        
+    except Exception as e:
+        logger.exception(f"[TEXT SEARCH SEND ERROR] {e}")
+        return False
+
+
+@Client.on_callback_query(filters.regex(r"^txtmv#"))
+async def text_movie_callback(client, query):
+    """User ne button click kiya - movie bhejo"""
+    try:
+        _, message_id, channel_id = query.data.split("#")
+        
+        try:
+            await client.copy_message(
+                chat_id=query.message.chat.id,
+                from_chat_id=int(channel_id),
+                message_id=int(message_id)
+            )
+            await query.answer("✅ Movie sent!")
+        except Exception as e:
+            logger.exception(f"Copy error: {e}")
+            movie = await get_text_message_details(message_id)
+            if movie:
+                await query.message.reply_text(
+                    text=movie.full_text,
+                    disable_web_page_preview=False
+                )
+                await query.answer("✅ Sent!")
+            else:
+                await query.answer("❌ Movie not found!", show_alert=True)
+    except Exception as e:
+        await query.answer(f"❌ Error: {str(e)[:100]}", show_alert=True)
