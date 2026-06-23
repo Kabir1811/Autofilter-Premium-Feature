@@ -6,7 +6,7 @@ from pyrogram import Client, filters, enums
 from pyrogram.errors import FloodWait
 from pyrogram.errors.exceptions.bad_request_400 import ChannelInvalid, ChatAdminRequired, UsernameInvalid, UsernameNotModified
 from info import ADMINS, INDEX_REQ_CHANNEL as LOG_CHANNEL
-from database.ia_filterdb import save_file
+from database.ia_filterdb import save_file, save_text_message  # ← NEW IMPORT
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from utils import temp, get_readable_time
 from math import ceil
@@ -124,14 +124,16 @@ async def set_skip_number(bot, message):
     else:
         await message.reply("Give me a skip number")
 
+
 def get_progress_bar(percent, length=10):
-    """Creates an emoji-based progress bar."""
     filled = int(length * percent / 100)
     unfilled = length - filled
     return '🟩' * filled + '⬜️' * unfilled
 
+
 async def index_files_to_db(lst_msg_id, chat, msg, bot):
     total_files = 0
+    total_text_msgs = 0  # ← NEW
     duplicate = 0
     errors = 0
     deleted = 0
@@ -177,15 +179,33 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot):
                     current += len(message_ids)
                     continue
                 save_tasks = []
+                text_save_tasks = []  # ← NEW
+                
                 for message in messages:
                     current += 1
                     try:
                         if message.empty:
                             deleted += 1
                             continue
-                        elif not message.media:
-                            no_media += 1
+                        
+                        # ============ NEW: TEXT + LINK MESSAGES ============
+                        if not message.media:
+                            # Pure text message (no photo, no video)
+                            if message.text and len(message.text) > 5:
+                                text_save_tasks.append(save_text_message(message))
+                            else:
+                                no_media += 1
                             continue
+                        
+                        # Photo with caption (jaise aapke movie posters)
+                        if message.media == enums.MessageMediaType.PHOTO:
+                            if message.caption and len(message.caption) > 5:
+                                text_save_tasks.append(save_text_message(message))
+                            else:
+                                no_media += 1
+                            continue
+                        # ====================================================
+                        
                         elif message.media not in [enums.MessageMediaType.VIDEO, enums.MessageMediaType.AUDIO, enums.MessageMediaType.DOCUMENT]:
                             unsupported += 1
                             continue
@@ -200,18 +220,36 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot):
                     except Exception:
                         errors += 1
                         continue
-                results = await asyncio.gather(*save_tasks, return_exceptions=True)
-                for result in results:
-                    if isinstance(result, Exception):
-                        errors += 1
-                    else:
-                        ok, code = result
-                        if ok:
-                            total_files += 1
-                        elif code == 0:
-                            duplicate += 1
-                        elif code == 2:
+                
+                # File results
+                if save_tasks:
+                    results = await asyncio.gather(*save_tasks, return_exceptions=True)
+                    for result in results:
+                        if isinstance(result, Exception):
                             errors += 1
+                        else:
+                            ok, code = result
+                            if ok:
+                                total_files += 1
+                            elif code == 0:
+                                duplicate += 1
+                            elif code == 2:
+                                errors += 1
+                
+                # ============ NEW: Text message results ============
+                if text_save_tasks:
+                    text_results = await asyncio.gather(*text_save_tasks, return_exceptions=True)
+                    for result in text_results:
+                        if isinstance(result, Exception):
+                            errors += 1
+                        else:
+                            ok, code = result
+                            if ok:
+                                total_text_msgs += 1
+                            elif code == 0:
+                                duplicate += 1
+                # ====================================================
+                
                 batch_time = time.time() - batch_start
                 batch_times.append(batch_time)
                 elapsed = time.time() - start_time
@@ -226,7 +264,8 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot):
                     f"Total Messages: <code>{total_messages}</code>\n"
                     f"Total Fetched: <code>{total_fetch}</code>\n"
                     f"Fetched: <code>{current}</code>\n"
-                    f"Saved: <code>{total_files}</code>\n"
+                    f"📁 Files Saved: <code>{total_files}</code>\n"
+                    f"📝 Text+Link Saved: <code>{total_text_msgs}</code>\n"
                     f"Duplicates: <code>{duplicate}</code>\n"
                     f"Deleted: <code>{deleted}</code>\n"
                     f"Non-Media: <code>{no_media + unsupported}</code> (Unsupported: <code>{unsupported}</code>)\n"
@@ -241,7 +280,8 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot):
                 f"Total Messages: <code>{total_messages}</code>\n"
                 f"Total Fetched: <code>{total_fetch}</code>\n"
                 f"Fetched: <code>{current}</code>\n"
-                f"Saved: <code>{total_files}</code>\n"
+                f"📁 Files Saved: <code>{total_files}</code>\n"
+                f"📝 Text+Link Saved: <code>{total_text_msgs}</code>\n"
                 f"Duplicates: <code>{duplicate}</code>\n"
                 f"Deleted: <code>{deleted}</code>\n"
                 f"Non-Media: <code>{no_media + unsupported}</code> (Unsupported: <code>{unsupported}</code>)\n"
@@ -254,4 +294,3 @@ async def index_files_to_db(lst_msg_id, chat, msg, bot):
                 f"❌ Error: <code>{e}</code>",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('Close', callback_data='close_data')]])
             )
-
